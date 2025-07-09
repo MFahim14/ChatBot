@@ -18,11 +18,18 @@ A robust, production-grade AI-powered chatbot platform for Fairental, providing 
 
 ```mermaid
 graph TD
-  A[User (Web Browser)] -->|HTTPS| B[Amazon S3 (Static Website)]
-  B -->|API Calls| C[API Gateway]
-  C -->|Lambda Proxy| D[AWS Lambda (Python)]
-  D -->|DynamoDB| E[(Chat History, Corrections)]
-  D -->|Bedrock| F[(AI/Knowledge Base)]
+    A[User Web Browser] --> B[Amazon S3 Static Website]
+    B --> C[API Gateway]
+    C --> D[AWS Lambda Python]
+    D --> E[(DynamoDB Chat History)]
+    D --> F[(AWS Bedrock AI)]
+    
+    style A fill:#e1f5fe
+    style B fill:#f3e5f5
+    style C fill:#fff3e0
+    style D fill:#e8f5e8
+    style E fill:#fce4ec
+    style F fill:#f1f8e9
 ```
 
 ---
