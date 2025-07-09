@@ -1,0 +1,119 @@
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Shuttle-inspired color palette with minimal colors */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 224 15% 20%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 224 15% 20%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 15% 20%;
+
+    --primary: 224 15% 20%;
+    --primary-foreground: 0 0% 98%;
+
+    --secondary: 224 10% 95%;
+    --secondary-foreground: 224 15% 20%;
+
+    --muted: 224 10% 95%;
+    --muted-foreground: 224 8% 45%;
+
+    --accent: 224 10% 92%;
+    --accent-foreground: 224 15% 20%;
+
+    --destructive: 0 60% 50%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 224 10% 90%;
+    --input: 224 10% 90%;
+    --ring: 224 15% 20%;
+
+    --radius: 0.5rem;
+
+    /* Shuttle-specific colors */
+    --shuttle-dark: 224 15% 20%;
+    --shuttle-medium: 224 10% 60%;
+    --shuttle-light: 224 10% 95%;
+    --shuttle-accent: 224 20% 30%;
+  }
+
+  .dark {
+    --background: 224 15% 8%;
+    --foreground: 0 0% 95%;
+
+    --card: 224 15% 10%;
+    --card-foreground: 0 0% 95%;
+
+    --popover: 224 15% 10%;
+    --popover-foreground: 0 0% 95%;
+
+    --primary: 0 0% 95%;
+    --primary-foreground: 224 15% 20%;
+
+    --secondary: 224 15% 15%;
+    --secondary-foreground: 0 0% 95%;
+
+    --muted: 224 15% 15%;
+    --muted-foreground: 224 8% 65%;
+
+    --accent: 224 15% 18%;
+    --accent-foreground: 0 0% 95%;
+
+    --destructive: 0 60% 50%;
+    --destructive-foreground: 0 0% 95%;
+
+    --border: 224 15% 18%;
+    --input: 224 15% 18%;
+    --ring: 0 0% 95%;
+
+    --shuttle-dark: 0 0% 95%;
+    --shuttle-medium: 224 8% 65%;
+    --shuttle-light: 224 15% 15%;
+    --shuttle-accent: 224 20% 70%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Minimal animations */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-subtle {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 2s infinite;
+}
