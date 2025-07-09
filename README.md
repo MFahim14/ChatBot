@@ -24,12 +24,12 @@ graph TD
     D --> E[(DynamoDB Chat History)]
     D --> F[(AWS Bedrock AI)]
     
-    style A fill:#e1f5fe
-    style B fill:#f3e5f5
-    style C fill:#fff3e0
-    style D fill:#e8f5e8
-    style E fill:#fce4ec
-    style F fill:#f1f8e9
+    style A fill:#1e3a8a,stroke:#1e40af,stroke-width:2px,color:#ffffff
+    style B fill:#7c3aed,stroke:#8b5cf6,stroke-width:2px,color:#ffffff
+    style C fill:#ea580c,stroke:#f97316,stroke-width:2px,color:#ffffff
+    style D fill:#059669,stroke:#10b981,stroke-width:2px,color:#ffffff
+    style E fill:#dc2626,stroke:#ef4444,stroke-width:2px,color:#ffffff
+    style F fill:#0891b2,stroke:#06b6d4,stroke-width:2px,color:#ffffff
 ```
 
 ---
