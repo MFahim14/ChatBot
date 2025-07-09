@@ -18,18 +18,20 @@ A robust, production-grade AI-powered chatbot platform for Fairental, providing 
 
 ```mermaid
 graph TD
-    A[User Web Browser] --> B[Amazon S3 Static Website]
-    B --> C[API Gateway]
-    C --> D[AWS Lambda Python]
-    D --> E[(DynamoDB Chat History)]
-    D --> F[(AWS Bedrock AI)]
+    A[User Web Browser] --> B[CloudFront CDN]
+    B --> C[Amazon S3 Static Website]
+    B --> D[API Gateway]
+    D --> E[AWS Lambda Python]
+    E --> F[(DynamoDB Chat History)]
+    E --> G[(AWS Bedrock AI)]
     
     style A fill:#1e3a8a,stroke:#1e40af,stroke-width:2px,color:#ffffff
     style B fill:#7c3aed,stroke:#8b5cf6,stroke-width:2px,color:#ffffff
-    style C fill:#ea580c,stroke:#f97316,stroke-width:2px,color:#ffffff
-    style D fill:#059669,stroke:#10b981,stroke-width:2px,color:#ffffff
-    style E fill:#dc2626,stroke:#ef4444,stroke-width:2px,color:#ffffff
-    style F fill:#0891b2,stroke:#06b6d4,stroke-width:2px,color:#ffffff
+    style C fill:#059669,stroke:#10b981,stroke-width:2px,color:#ffffff
+    style D fill:#ea580c,stroke:#f97316,stroke-width:2px,color:#ffffff
+    style E fill:#0891b2,stroke:#06b6d4,stroke-width:2px,color:#ffffff
+    style F fill:#dc2626,stroke:#ef4444,stroke-width:2px,color:#ffffff
+    style G fill:#7c2d12,stroke:#c2410c,stroke-width:2px,color:#ffffff
 ```
 
 ---
