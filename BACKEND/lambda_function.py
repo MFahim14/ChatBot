@@ -99,7 +99,7 @@ def create_response(status_code: int, body: dict) -> dict:
 
 # --- Utility Function for Timestamp ---
 def get_utc_timestamp_str():
-    """Generates UTC timestamp in YYYY-MM-DDTHH:MM:SS.sssZ format."""
+    """Generates UTC timestamp in ISO 8601 format."""
     now_utc = datetime.now(timezone.utc)
     # Format to YYYY-MM-DDTHH:MM:SS.sssZ
     return now_utc.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
@@ -386,10 +386,10 @@ def handle_admin_history_request(event: dict) -> dict:
     Can be filtered by sessionId and limited by results.
     """
     try:
-        # FIX: Ensure query_params is always a dictionary, even if queryStringParameters is None
         query_params = event.get("queryStringParameters") or {} 
         session_id_filter = query_params.get("sessionId")
-        limit = int(query_params.get("limit", 100)) # Default limit 100
+        page = int(query_params.get("page", 1)) # Default page 1
+        limit = int(query_params.get("limit", 20)) # Default limit 20
 
         table = dynamodb.Table(DYNAMODB_TABLE_NAME)
         
@@ -401,7 +401,6 @@ def handle_admin_history_request(event: dict) -> dict:
             'KeyConditionExpression': 'EventType = :ai_response_et',
             'ExpressionAttributeValues': {':ai_response_et': 'AI_RESPONSE'},
             'ScanIndexForward': False, # Most recent first
-            'Limit': limit # Apply limit to each query
         }
         if session_id_filter:
             ai_response_query['FilterExpression'] = 'SessionId = :sid'
@@ -416,7 +415,6 @@ def handle_admin_history_request(event: dict) -> dict:
             'KeyConditionExpression': 'EventType = :question_et',
             'ExpressionAttributeValues': {':question_et': 'QUESTION'},
             'ScanIndexForward': False, # Most recent first
-            'Limit': limit # Apply limit to each query
         }
         if session_id_filter:
             question_query['FilterExpression'] = 'SessionId = :sid'
@@ -424,21 +422,67 @@ def handle_admin_history_request(event: dict) -> dict:
             
         response = table.query(**question_query)
         all_items.extend(response.get('Items', []))
+
+        # --- ADDED: Fetch ADMIN_CORRECTION events ---
+        admin_correction_query = {
+            'IndexName': 'EventType_Timestamp_Index',
+            'KeyConditionExpression': 'EventType = :admin_correction_et',
+            'ExpressionAttributeValues': {':admin_correction_et': 'ADMIN_CORRECTION'},
+            'ScanIndexForward': False, # Most recent first
+        }
+        if session_id_filter:
+            admin_correction_query['FilterExpression'] = 'SessionId = :sid'
+            admin_correction_query['ExpressionAttributeValues'][':sid'] = session_id_filter
+            
+        response = table.query(**admin_correction_query)
+        all_items.extend(response.get('Items', []))
+        # --- END ADDITION ---
         
-        # Combine and sort all fetched items by Timestamp
-        # FIX: Corrected lambda key to use x['Timestamp']
+        # Combine and sort all fetched items by Timestamp in descending order
         sorted_items = sorted(
             [item for item in all_items if 'Timestamp' in item],
             key=lambda x: x['Timestamp'],
             reverse=True # Most recent first
-        )[:limit] # Re-apply limit after combining and sorting
+        )
 
-        logger.info(f"Retrieved {len(sorted_items)} history items for admin (filtered by sessionId: {session_id_filter or 'None'}).")
-        return create_response(200, {"history": sorted_items})
+        # Calculate summary statistics
+        total_interactions = len(sorted_items)
+        total_questions = len([item for item in sorted_items if item.get('EventType') == 'QUESTION'])
+        total_ai_responses = len([item for item in sorted_items if item.get('EventType') == 'AI_RESPONSE'])
+        total_admin_corrections = len([item for item in sorted_items if item.get('EventType') == 'ADMIN_CORRECTION']) # Now this will be accurate!
+        unique_session_count = len(set([item.get('SessionId') for item in sorted_items if item.get('SessionId')]))
+
+        # Calculate pagination metadata
+        total_items = len(sorted_items)
+        total_pages = (total_items + limit - 1) // limit  # Ceiling division
+        start_index = (page - 1) * limit
+        end_index = start_index + limit
+        paginated_items = sorted_items[start_index:end_index]
+
+        # Build response with summary, paginated history, and metadata
+        response_data = {
+            "summary": {
+                "totalInteractions": total_interactions,
+                "totalQuestions": total_questions,
+                "totalAIResponses": total_ai_responses,
+                "totalAdminCorrections": total_admin_corrections,
+                "uniqueSessionCount": unique_session_count
+            },
+            "history": paginated_items,
+            "meta": {
+                "current_page": page,
+                "total_pages": total_pages,
+                "total_items": total_items,
+                "limit": limit
+            }
+        }
+
+        logger.info(f"Retrieved {len(paginated_items)} history items for admin (filtered by sessionId: {session_id_filter or 'None'}, page: {page}, limit: {limit}).")
+        return create_response(200, response_data)
 
     except ValueError:
-        logger.error("Invalid 'limit' query parameter. Must be an integer.")
-        return create_response(400, {"message": "Invalid 'limit' query parameter. Must be an integer."})
+        logger.error("Invalid 'limit' or 'page' query parameter. Must be an integer.")
+        return create_response(400, {"message": "Invalid 'limit' or 'page' query parameter. Must be an integer."})
     except ClientError as e:
         logger.error(f"DynamoDB error retrieving history: {e}")
         return create_response(500, {"message": "Failed to retrieve history due to database error."})
