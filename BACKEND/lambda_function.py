@@ -5,6 +5,7 @@ import re
 from datetime import datetime, timezone
 import uuid
 from typing import List, Dict
+from decimal import Decimal # Import Decimal for handling DynamoDB numbers
 
 import boto3
 from botocore.exceptions import ClientError
@@ -36,6 +37,22 @@ BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-3-sonnet
 if not BEDROCK_KB_ID:
     logger.error("BEDROCK_KB_ID environment variable is not set.")
     raise ValueError("BEDROCK_KB_ID environment variable is not set.")
+
+# --- Custom JSON Encoder for Decimal types ---
+class DecimalEncoder(json.JSONEncoder):
+    """
+    Custom JSON encoder that handles Decimal objects by converting them to float or int.
+    Useful for serializing DynamoDB items which often contain Decimal types for numbers.
+    """
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            # Check if it's an integer (no decimal places)
+            if obj % 1 == 0:
+                return int(obj)
+            else:
+                return float(obj)
+        # Let the base class default method raise the TypeError for other types
+        return json.JSONEncoder.default(self, obj)
 
 # --- Strands Agent Instruction Prompt ---
 AGENT_INSTRUCTION_PROMPT = """
@@ -94,7 +111,7 @@ def create_response(status_code: int, body: dict) -> dict:
             "Access-Control-Allow-Methods": "OPTIONS,POST,GET",
             "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
         },
-        "body": json.dumps(body),
+        "body": json.dumps(body, cls=DecimalEncoder), # <--- Using DecimalEncoder
     }
 
 # --- Utility Function for Timestamp ---
@@ -380,104 +397,123 @@ def handle_chat_request(event: dict) -> dict:
         logger.error(f"An unexpected error occurred in chat handler: {e}", exc_info=True)
         return create_response(500, {"message": f"An unexpected error occurred: {e}"})
 
+# Helper function to fetch all items for a given EventType, handling DynamoDB pagination
+def fetch_all_items_for_event_type(table, event_type, session_id_filter):
+    all_type_items = []
+    last_evaluated_key = None
+
+    while True:
+        query_kwargs = {
+            'IndexName': 'EventType_Timestamp_Index',
+            'KeyConditionExpression': 'EventType = :et',
+            'ExpressionAttributeValues': {':et': event_type},
+            'ScanIndexForward': False, # Most recent first from DB
+        }
+        if session_id_filter:
+            query_kwargs['FilterExpression'] = 'SessionId = :sid'
+            query_kwargs['ExpressionAttributeValues'][':sid'] = session_id_filter
+        
+        if last_evaluated_key:
+            query_kwargs['ExclusiveStartKey'] = last_evaluated_key
+
+        response = table.query(**query_kwargs)
+        all_type_items.extend(response.get('Items', []))
+        last_evaluated_key = response.get('LastEvaluatedKey')
+
+        if not last_evaluated_key:
+            break
+    return all_type_items
+
 def handle_admin_history_request(event: dict) -> dict:
     """
     Handles GET requests to /admin/history to retrieve all previous questions and AI responses.
-    Can be filtered by sessionId and limited by results.
+    Implements pagination such that logs are grouped by InteractionId.
     """
     try:
         query_params = event.get("queryStringParameters") or {} 
         session_id_filter = query_params.get("sessionId")
         page = int(query_params.get("page", 1)) # Default page 1
-        limit = int(query_params.get("limit", 20)) # Default limit 20
+        limit = int(query_params.get("limit", 20)) # Default limit 20 (now for InteractionId groups)
 
         table = dynamodb.Table(DYNAMODB_TABLE_NAME)
         
+        # 1. Fetch ALL relevant items for the specified event types (handling DynamoDB's 1MB limit)
         all_items = []
-
-        # Fetch AI_RESPONSE events
-        ai_response_query = {
-            'IndexName': 'EventType_Timestamp_Index',
-            'KeyConditionExpression': 'EventType = :ai_response_et',
-            'ExpressionAttributeValues': {':ai_response_et': 'AI_RESPONSE'},
-            'ScanIndexForward': False, # Most recent first
-        }
-        if session_id_filter:
-            ai_response_query['FilterExpression'] = 'SessionId = :sid'
-            ai_response_query['ExpressionAttributeValues'][':sid'] = session_id_filter
+        all_items.extend(fetch_all_items_for_event_type(table, 'AI_RESPONSE', session_id_filter))
+        all_items.extend(fetch_all_items_for_event_type(table, 'QUESTION', session_id_filter))
+        all_items.extend(fetch_all_items_for_event_type(table, 'ADMIN_CORRECTION', session_id_filter))
         
-        response = table.query(**ai_response_query)
-        all_items.extend(response.get('Items', []))
+        # 2. Group by InteractionId
+        grouped_interactions = {}
+        for item in all_items:
+            interaction_id = item.get('InteractionId')
+            if interaction_id:
+                if interaction_id not in grouped_interactions:
+                    grouped_interactions[interaction_id] = []
+                grouped_interactions[interaction_id].append(item)
 
-        # Fetch QUESTION events
-        question_query = {
-            'IndexName': 'EventType_Timestamp_Index',
-            'KeyConditionExpression': 'EventType = :question_et',
-            'ExpressionAttributeValues': {':question_et': 'QUESTION'},
-            'ScanIndexForward': False, # Most recent first
-        }
-        if session_id_filter:
-            question_query['FilterExpression'] = 'SessionId = :sid'
-            question_query['ExpressionAttributeValues'][':sid'] = session_id_filter
-            
-        response = table.query(**question_query)
-        all_items.extend(response.get('Items', []))
+        # 3. Sort items within each InteractionId group by Timestamp (ascending for conversation flow)
+        for interaction_id, items in grouped_interactions.items():
+            # Filter out items without a 'Timestamp' to prevent errors during sorting
+            valid_items = [item for item in items if 'Timestamp' in item]
+            grouped_interactions[interaction_id] = sorted(valid_items, key=lambda x: x['Timestamp'])
 
-        # --- ADDED: Fetch ADMIN_CORRECTION events ---
-        admin_correction_query = {
-            'IndexName': 'EventType_Timestamp_Index',
-            'KeyConditionExpression': 'EventType = :admin_correction_et',
-            'ExpressionAttributeValues': {':admin_correction_et': 'ADMIN_CORRECTION'},
-            'ScanIndexForward': False, # Most recent first
-        }
-        if session_id_filter:
-            admin_correction_query['FilterExpression'] = 'SessionId = :sid'
-            admin_correction_query['ExpressionAttributeValues'][':sid'] = session_id_filter
-            
-        response = table.query(**admin_correction_query)
-        all_items.extend(response.get('Items', []))
-        # --- END ADDITION ---
-        
-        # Combine and sort all fetched items by Timestamp in descending order
-        sorted_items = sorted(
-            [item for item in all_items if 'Timestamp' in item],
-            key=lambda x: x['Timestamp'],
-            reverse=True # Most recent first
-        )
+        # 4. Determine the sorting key for InteractionId groups (latest timestamp within the group)
+        # Create a list of (latest_timestamp_in_group, InteractionId) tuples
+        interaction_id_sort_keys = []
+        for interaction_id, items in grouped_interactions.items():
+            if items: # Only consider groups that actually have items
+                # Find the latest timestamp within this group
+                latest_timestamp = max(item['Timestamp'] for item in items)
+                interaction_id_sort_keys.append((latest_timestamp, interaction_id))
 
-        # Calculate summary statistics
-        total_interactions = len(sorted_items)
-        total_questions = len([item for item in sorted_items if item.get('EventType') == 'QUESTION'])
-        total_ai_responses = len([item for item in sorted_items if item.get('EventType') == 'AI_RESPONSE'])
-        total_admin_corrections = len([item for item in sorted_items if item.get('EventType') == 'ADMIN_CORRECTION']) # Now this will be accurate!
-        unique_session_count = len(set([item.get('SessionId') for item in sorted_items if item.get('SessionId')]))
+        # 5. Sort InteractionId groups by their latest timestamp (descending for most recent interactions first)
+        interaction_id_sort_keys.sort(key=lambda x: x[0], reverse=True) # Sort by timestamp, descending
 
-        # Calculate pagination metadata
-        total_items = len(sorted_items)
-        total_pages = (total_items + limit - 1) // limit  # Ceiling division
+        # Extract ordered InteractionIds
+        ordered_interaction_ids = [item[1] for item in interaction_id_sort_keys]
+
+        # Calculate summary statistics based on ALL fetched items before pagination
+        total_items_raw = len(all_items) # Total individual log entries
+        total_questions = len([item for item in all_items if item.get('EventType') == 'QUESTION'])
+        total_ai_responses = len([item for item in all_items if item.get('EventType') == 'AI_RESPONSE'])
+        total_admin_corrections = len([item for item in all_items if item.get('EventType') == 'ADMIN_CORRECTION'])
+        unique_session_count = len(set([item.get('SessionId') for item in all_items if item.get('SessionId')]))
+
+        # 6. Apply pagination to the ordered InteractionId groups
+        total_interaction_groups = len(ordered_interaction_ids)
+        total_pages = (total_interaction_groups + limit - 1) // limit  # Ceiling division
         start_index = (page - 1) * limit
         end_index = start_index + limit
-        paginated_items = sorted_items[start_index:end_index]
+        paginated_interaction_ids = ordered_interaction_ids[start_index:end_index]
 
-        # Build response with summary, paginated history, and metadata
+        # 7. Flatten the paginated groups into the final history list, maintaining internal order
+        paginated_history_items = []
+        for interaction_id in paginated_interaction_ids:
+            paginated_history_items.extend(grouped_interactions[interaction_id])
+
+        # 8. Build response with summary, paginated history, and metadata
         response_data = {
             "summary": {
-                "totalInteractions": total_interactions,
+                "totalInteractionGroups": total_interaction_groups, # Total number of full interaction turns
+                "totalIndividualLogEntries": total_items_raw, # Total number of individual log entries (Q, A, C)
                 "totalQuestions": total_questions,
                 "totalAIResponses": total_ai_responses,
                 "totalAdminCorrections": total_admin_corrections,
                 "uniqueSessionCount": unique_session_count
             },
-            "history": paginated_items,
+            "history": paginated_history_items,
             "meta": {
                 "current_page": page,
                 "total_pages": total_pages,
-                "total_items": total_items,
-                "limit": limit
+                "total_interaction_groups": total_interaction_groups, # Total number of interaction groups
+                "limit_per_page": limit # Limit applied to interaction groups per page
             }
         }
 
-        logger.info(f"Retrieved {len(paginated_items)} history items for admin (filtered by sessionId: {session_id_filter or 'None'}, page: {page}, limit: {limit}).")
+        logger.info(f"Retrieved {len(paginated_interaction_ids)} interaction groups "
+                    f"(filtered by sessionId: {session_id_filter or 'None'}, page: {page}, limit: {limit}). "
+                    f"Total individual log entries in response: {len(paginated_history_items)}.")
         return create_response(200, response_data)
 
     except ValueError:
